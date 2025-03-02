@@ -1,0 +1,12 @@
+nano ~/.config/systemd/user/activ-login.service
+
+Start pupetteer in virtual display:
+sudo apt update
+sudo apt install -y xvfb
+sudo systemctl daemon-reexec
+
+
+systemctl --user daemon-reload
+systemctl --user enable activ-login
+systemctl --user restart activ-login
+journalctl --user -u activ-login --no-pager --full -n 50

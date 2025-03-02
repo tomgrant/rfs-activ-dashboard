@@ -1,0 +1,17 @@
+[Unit]
+Description=Login to RFS Activ dashboard
+After=syslog.target network.target graphical.target
+
+[Service]
+Type=simple
+Restart=on-failure
+RestartSec=10
+ExecStart=/usr/bin/node /home/hill-top/Documents/login.js
+WorkingDirectory=/home/hill-top/Documents
+Environment=HOME=/home/hill-top
+Environment=USER=hill-top
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/hill-top/.Xauthority
+
+[Install]
+WantedBy=default.target
