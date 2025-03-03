@@ -34,6 +34,7 @@ const os = require('os');
 const userDataPath = process.env.USER_DATA_PATH || path.resolve(__dirname, 'user-data');
 const preferencesPath = `${userDataPath}/Default/Preferences`;
 
+// used for testing on windows (note updatePreferences() will not work on windows)
 const executablePath = os.platform() === 'win32' 
     ? 'C:\\Program Files (x86)\\Microsoft\\Edge Dev\\Application\\msedge.exe'
     : '/usr/bin/chromium-browser';
@@ -90,6 +91,9 @@ const pages = {
         verifyButton: 'input.button.button-primary[type="submit"][value="Verify"]',
         rememberMe: 'label[for="input36"]'
     },
+    webapp: {
+        url: 'https://activ.rfs.nsw.gov.au/webapp'
+    },
     dashboard: {
         url: 'https://activ.rfs.nsw.gov.au/webapp/dashboard'
     }
@@ -139,53 +143,97 @@ async function loginToRFSActiv() {
         const openPages = await browser.pages();
         if (openPages.length > 1) await openPages[0].close();
 
-        // Navigate to login page
-        await page.goto(pages.login.url, { waitUntil: 'networkidle2' });
+        // Retry logic for login
+        let loginAttempts = 0;
+        const maxLoginAttempts = 5;
+        const retryDelay = 5000; // 5 seconds
 
-        // Check if login page is detected
-        if (await page.$(`${pages.login.username}, ${pages.login.password}`)) {
-            _log("Login form detected. Logging in...");
-            
-            // Wait until the username field is visible before typing
-            await page.waitForSelector(pages.login.username, { visible: true, timeout: 10000 });
-            await page.focus(pages.login.username);
-            await page.type(pages.login.username, process.env.USERNAME);
-            _log("Username entered.");
+        while (loginAttempts < maxLoginAttempts) {
+            try {
+                // Navigate to login page
+                await page.goto(pages.login.url, { waitUntil: 'networkidle2' });
 
-            // Click 'Remember Me' if available
-            const rememberMeCheckbox = await page.$(pages.login.rememberMe);
-            if (rememberMeCheckbox) await rememberMeCheckbox.click();
-            _log("Remember Me clicked.");
+                // Check if login page is detected
+                if (await page.$(pages.login.username)) {
+                    _log("Login form detected. Logging in...");
 
-            // Click "Next" and wait for the password field
-            await page.waitForSelector(pages.login.nextButton, { visible: true, timeout: 5000 });
-            await page.click(pages.login.nextButton);
-            await page.waitForSelector(pages.login.password, { visible: true, timeout: 10000 });
-            _log("Next clicked.");
+                    // Wait until the username field is visible before typing
+                    await page.waitForSelector(pages.login.username, { visible: true, timeout: 10000 });
+                    await page.focus(pages.login.username);
+                    await page.type(pages.login.username, process.env.USERNAME);
+                    _log("Username entered.");
 
-            // Enter password and click "Verify"
-            await page.type(pages.login.password, process.env.PASSWORD);
-            await page.waitForSelector(pages.login.verifyButton, { visible: true, timeout: 5000 });
-            await page.click(pages.login.verifyButton);
-            _log("Password entered and attempting login.");
+                    // Click 'Remember Me' if available
+                    const rememberMeCheckbox = await page.$(pages.login.rememberMe);
+                    if (rememberMeCheckbox) await rememberMeCheckbox.click();
+                    _log("Remember Me clicked.");
 
-            // Wait for successful navigation before moving forward
-            await page.waitForNavigation({ waitUntil: 'domcontentloaded' });
+                    // Click "Next" and wait for the password field
+                    await page.waitForSelector(pages.login.nextButton, { visible: true, timeout: 5000 });
+                    await page.click(pages.login.nextButton);
+                    await page.waitForSelector(pages.login.password, { visible: true, timeout: 10000 });
+                    _log("Next clicked.");
 
-            _log("Login successful!");
-        } else {
-            _log("Already logged in. Skipping login process.");
+                    // Enter password and click "Verify"
+                    await page.type(pages.login.password, process.env.PASSWORD);
+                    await page.waitForSelector(pages.login.verifyButton, { visible: true, timeout: 5000 });
+                    await page.click(pages.login.verifyButton);
+                    _log("Password entered and attempting login.");
+
+                    // Wait for successful navigation before moving forward
+                    await page.waitForNavigation({ waitUntil: 'domcontentloaded' });
+
+                    // Check if we are on the dashboard 
+                    if (page.url().includes(pages.dashboard.url) || page.url().includes(pages.webapp.url)) {
+                        _log("Login successful!");
+                        break; // Exit the loop if login is successful
+                    } else {
+                        _log("Login failed. Retrying...");
+                    }
+                } else {
+                    _log("Login form not detected. Retrying...");
+                }
+            } catch (error) {
+                _log(`Login attempt ${loginAttempts + 1} failed. Retrying in ${retryDelay / 1000} seconds...`);
+            }
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+            loginAttempts++;
         }
 
-        // Ensure navigation to dashboard
-        _log("Navigating to dashboard...");
-        await page.goto(pages.dashboard.url, { waitUntil: 'networkidle0' });
-        _log("Dashboard loaded.");
+        if (loginAttempts === maxLoginAttempts) {
+            throw new Error("Max login attempts reached. Unable to login.");
+        }
+
+        // Retry logic for navigating to dashboard
+        let navigationAttempts = 0;
+        const maxNavigationAttempts = 5;
+
+        while (navigationAttempts < maxNavigationAttempts) {
+            try {
+                // Ensure navigation to dashboard
+                _log("Navigating to dashboard...");
+                await page.goto(pages.dashboard.url, { waitUntil: 'networkidle0' });
+
+                // Check if we are on the dashboard
+                if (page.url().includes(pages.dashboard.url)) {
+                    _log("Dashboard loaded.");
+                    break; // Exit the loop if navigation is successful
+                } else {
+                    _log("Navigation to dashboard failed. Retrying...");
+                }
+            } catch (error) {
+                _log(`Navigation attempt ${navigationAttempts + 1} failed. Retrying in ${retryDelay / 1000} seconds...`);
+            }
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+            navigationAttempts++;
+        }
+
+        if (navigationAttempts === maxNavigationAttempts) {
+            throw new Error("Max navigation attempts reached. Unable to navigate to dashboard.");
+        }
 
         // Zoom in for better readability
-        await page.evaluate(() => document.body.style.zoom = '1.4');
-
-        await page.goto(pages.dashboard.url, { waitUntil: 'networkidle0' });
+        await page.evaluate(() => document.body.style.zoom = '1.3');
 
         // Auto-refresh every 6 hours
         setInterval(async () => {
@@ -202,40 +250,7 @@ function _log(msg) {
     console.log(msg);
 }
 
-async function mannuallyUpdatePasswordManager(page){
-     // Disable password saving settings directly in the browser if needed
-     await page.evaluate(() => {
-        try {
-            window.localStorage.setItem('credentials_enable_service', false);
-            window.localStorage.setItem('profile.password_manager_enabled', false);
-        } catch (e) {
-            console.error(e);
-        }
-    });
-    
-    // Try disabling it manually
-    await page.evaluate(() => {
-        window.chrome && window.chrome.passwords && window.chrome.passwords.disableAutoSave && window.chrome.passwords.disableAutoSave();
-    });
-
-    // Intercept requests to block the password manager
-    await page.setRequestInterception(true);
-    page.on('request', async (request) => {
-        try {
-            if (request.url().includes('chrome://password-manager')) {
-                _log('Blocking password manager request');
-                await request.abort();
-            } else {
-                await request.continue();
-            }
-        } catch (error) {
-            console.error("Request interception error:", error);
-            await request.continue();
-        }
-    });
-}
-
 (async () => {
-    // await updatePreferences(); // Modify Preferences file
+    await updatePreferences(); // Modify Preferences file
     await loginToRFSActiv(); // Start Puppeteer
 })();
