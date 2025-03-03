@@ -11,6 +11,9 @@ Ensure the following dependencies are installed **globally**:
 - **dotenv**
 - **Xvfb (Virtual Display)**
 
+The following are optional:
+- **Typscript**
+
 # Update package lists
 ```sh
 sudo apt update && sudo apt upgrade -y
@@ -78,6 +81,22 @@ To check the service status:
 ```sh
 systemctl --user status activ-login.service
 ```
+
+## Typscript
+Currently typscript is an optional extra under login.ts. Future versions of this will be using the typescript file for improvments.
+
+if you wish to use typescript, ensure all the packages are installed with 
+
+```sh
+npm install` 
+```
+
+Then compile the ts
+```sh
+npx tsc
+```
+
+the compiled js is then found in `dist/login.js` update the service paths accordingly.
 
 ## Notes
 - The **USER_DATA_PATH** is where browser preferences are stored. Ensure it is a directory **with read/write access** (e.g., `/home/pi/chrome`).
