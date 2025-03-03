@@ -29,11 +29,14 @@ require('dotenv').config();
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
-const userDataPath = '/home/hill-top/Documents/chrome';
+const userDataPath = process.env.USER_DATA_PATH || path.resolve(__dirname, 'user-data');
 const preferencesPath = `${userDataPath}/Default/Preferences`;
 
-
+const executablePath = os.platform() === 'win32' 
+    ? 'C:\\Program Files (x86)\\Microsoft\\Edge Dev\\Application\\msedge.exe'
+    : '/usr/bin/chromium-browser';
 
 // Function to update Preferences file
 async function updatePreferences() {
@@ -42,7 +45,7 @@ async function updatePreferences() {
         fs.mkdirSync(userDataPath, { recursive: true });
     }
     
-    console.log("Checking for Preferences file...");
+    _log("Checking for Preferences file...");
     
     if (!fs.existsSync(preferencesPath)) {
         console.error("Preferences file still does not exist. Skipping update.");
@@ -72,7 +75,7 @@ async function updatePreferences() {
 
     try {
         fs.writeFileSync(preferencesPath, JSON.stringify(preferences, null, 2));
-        console.log("Updated Chrome preferences to disable password saving.");
+        _log("Updated Chrome preferences to disable password saving.");
     } catch (error) {
         console.error("Error writing Preferences file:", error);
     }
@@ -84,142 +87,119 @@ const pages = {
         username: '#input28',
         password: '#input60',
         nextButton: 'input.button.button-primary[type="submit"][value="Next"]',
-        verifyButton: 'input.button.button-primary[type="submit"][value="Verify"]'
+        verifyButton: 'input.button.button-primary[type="submit"][value="Verify"]',
+        rememberMe: 'label[for="input36"]'
     },
     dashboard: {
         url: 'https://activ.rfs.nsw.gov.au/webapp/dashboard'
     }
 }
 
+const browserArgs = [
+    '--no-sandbox',
+    '--disable-password-manager',
+    '--disable-save-password-bubble',
+    '--suppress-message-center-popups',
+    '--hide-crash-restore-bubble',
+    '--disable-setuid-sandbox',
+    '--start-fullscreen',
+    '--disable-notifications',
+    '--disable-prompt-on-repost',
+    '--disable-infobars',
+    '--disable-autofill-keyboard-accessory-view',
+    '--disable-password-generation',
+    '--disable-autofill-profile-save',
+    '--disable-translate',
+    '--disable-sync',
+    '--disable-extensions',
+    '--password-store=basic',
+    '--use-mock-keychain',
+    '--disable-features=AutofillServerCommunication',
+    '--disable-features=AutofillEnableAccountWalletStorage',
+    '--disable-features=PasswordManagerOnboarding',
+    '--disable-component-extensions-with-background-pages',
+    '--disable-background-networking'
+];
+
 async function loginToRFSActiv() {
     try {
         const browser = await puppeteer.launch({
-                headless: false,
-                executablePath: '/usr/bin/chromium-browser',
-                userDataDir: userDataPath, // Ensures settings persist
-                args: [
-                        '--no-sandbox',
-                        '--disable-password-manager',
-                        '--disable-save-password-bubble',
-                        '--suppress-message-center-popups',
-                        '--hide-crash-restore-bubble',
-                        '--disable-setuid-sandbox',
-                        '--start-fullscreen',
-                        '--disable-notifications',
-                        '--disable-prompt-on-repost',
-                        '--disable-infobars',
-                        '--disable-autofill-keyboard-accessory-view',
-                        '--disable-password-generation',
-                        '--disable-autofill-profile-save',
-                        '--disable-translate',
-                        '--disable-sync',
-                        '--disable-extensions',
-                        '--password-store=basic',
-                        '--use-mock-keychain',
-                        '--disable-features=AutofillServerCommunication',
-                        '--disable-features=AutofillEnableAccountWalletStorage',
-                        '--disable-features=PasswordManagerOnboarding',
-                        '--disable-component-extensions-with-background-pages',
-                        '--disable-background-networking'
-                ],
-                defaultViewport: null,
-                ignoreDefaultArgs: ['--enable-automation']
+            headless: false,
+            executablePath: executablePath,
+            userDataDir: userDataPath,
+            args: browserArgs,
+            defaultViewport: null,
+            ignoreDefaultArgs: ['--enable-automation']
         });
 
         const page = await browser.newPage();
-        // await updatePreferences();
         await page.keyboard.press('F11');
 
-        // Close the first blank tab if it exists
-        const pages = await browser.pages();
-        if (pages.length > 1) {
-            await pages[0].close();
-        }
+        // Close any blank tabs that open
+        const openPages = await browser.pages();
+        if (openPages.length > 1) await openPages[0].close();
 
-        // Navigate to the login page
+        // Navigate to login page
         await page.goto(pages.login.url, { waitUntil: 'networkidle2' });
 
-        // Check if login form exists
-        const isLoginPage = await page.$('#input28, #input60') !== null;
+        // Check if login page is detected
+        if (await page.$(`${pages.login.username}, ${pages.login.password}`)) {
+            _log("Login form detected. Logging in...");
+            
+            // Wait until the username field is visible before typing
+            await page.waitForSelector(pages.login.username, { visible: true, timeout: 10000 });
+            await page.focus(pages.login.username);
+            await page.type(pages.login.username, process.env.USERNAME);
+            _log("Username entered.");
 
-        if (isLoginPage) {
-            console.log("Login form detected. Proceeding with login...");
+            // Click 'Remember Me' if available
+            const rememberMeCheckbox = await page.$(pages.login.rememberMe);
+            if (rememberMeCheckbox) await rememberMeCheckbox.click();
+            _log("Remember Me clicked.");
 
-            const usernameFieldExists = await page.$(pages.login.username) !== null;
+            // Click "Next" and wait for the password field
+            await page.waitForSelector(pages.login.nextButton, { visible: true, timeout: 5000 });
+            await page.click(pages.login.nextButton);
+            await page.waitForSelector(pages.login.password, { visible: true, timeout: 10000 });
+            _log("Next clicked.");
 
-            if (usernameFieldExists) {
-                await page.type(pages.login.username, process.env.USERNAME);
-
-                const rememberMeCheckbox = await page.$('label[for="input36"]');
-                if (rememberMeCheckbox) {
-                    await page.click('label[for="input36"]');
-                }
-
-                // Ensure the "Next" button is clickable
-                const nextButton = await page.$('input.button.button-primary[type="submit"][value="Next"]');
-                if (nextButton) {
-                    const box = await nextButton.boundingBox();
-                    if (box) {
-                        await nextButton.click();
-                        console.log("Next button clicked!");
-                    } else {
-                        console.log("Next button is not clickable.");
-                    }
-                } else {
-                    console.log("Next button not found.");
-                }
-            } else {
-                console.log("Username field is prefilled, proceeding to password...");
-            }
-
-            // Wait for password field
-            await page.waitForSelector(pages.login.password, { visible: true });
-
-            // Enter password
+            // Enter password and click "Verify"
             await page.type(pages.login.password, process.env.PASSWORD);
+            await page.waitForSelector(pages.login.verifyButton, { visible: true, timeout: 5000 });
+            await page.click(pages.login.verifyButton);
+            _log("Password entered and attempting login.");
 
-            // Click "Verify" button
-            const verifyButtonSelector = 'input.button.button-primary[type="submit"][value="Verify"]';
-            await page.waitForSelector(verifyButtonSelector, { visible: true, timeout: 5000 });
+            // Wait for successful navigation before moving forward
+            await page.waitForNavigation({ waitUntil: 'domcontentloaded' });
 
-            const verifyButton = await page.$(verifyButtonSelector);
-            if (verifyButton) {
-                const box = await verifyButton.boundingBox();
-                if (box) {
-                    await verifyButton.click();
-                    console.log("Verify button clicked!");
-                } else {
-                    console.log("Verify button is not clickable.");
-                }
-            } else {
-                console.log("Verify button not found.");
-            }
-
-            // Wait for navigation after login
-            await page.waitForNavigation({ waitUntil: 'networkidle0' });
-
-            console.log('Logged in successfully');
+            _log("Login successful!");
         } else {
-            console.log("User is already logged in. Skipping login process.");
-            await page.waitForNavigation({ waitUntil: 'networkidle0' });
+            _log("Already logged in. Skipping login process.");
         }
-		
-        // Navigate to the dashboard
+
+        // Ensure navigation to dashboard
+        _log("Navigating to dashboard...");
+        await page.goto(pages.dashboard.url, { waitUntil: 'networkidle0' });
+        _log("Dashboard loaded.");
+
+        // Zoom in for better readability
+        await page.evaluate(() => document.body.style.zoom = '1.4');
+
         await page.goto(pages.dashboard.url, { waitUntil: 'networkidle0' });
 
-        console.log("Navigated to Dashboard.");
-        
-        await page.evaluate(() => document.body.style.zoom = 1.4  );
-        
-        // Refresh the page every 6 hours (21,600,000 milliseconds)
+        // Auto-refresh every 6 hours
         setInterval(async () => {
-            console.log("Refreshing page...");
+            _log("Refreshing page...");
             await page.reload({ waitUntil: 'networkidle0' });
-        }, 21600000);
+        }, 3600000 * 6);
 
     } catch (error) {
-        console.error('Error during login:', error);
+        console.error("Error during login:", error);
     }
+}
+
+function _log(msg) {
+    console.log(msg);
 }
 
 async function mannuallyUpdatePasswordManager(page){
@@ -243,7 +223,7 @@ async function mannuallyUpdatePasswordManager(page){
     page.on('request', async (request) => {
         try {
             if (request.url().includes('chrome://password-manager')) {
-                console.log('Blocking password manager request');
+                _log('Blocking password manager request');
                 await request.abort();
             } else {
                 await request.continue();
@@ -256,6 +236,6 @@ async function mannuallyUpdatePasswordManager(page){
 }
 
 (async () => {
-    await updatePreferences(); // Modify Preferences file
+    // await updatePreferences(); // Modify Preferences file
     await loginToRFSActiv(); // Start Puppeteer
 })();
